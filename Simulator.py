@@ -155,7 +155,10 @@ def jalr(m_line):
     global reg_pc
     imm_val=m_line[0:12]
     reg_source=m_line[12:17]
-    reg_dest=m_line[20:15]
+    # BUG FIX: was m_line[20:15] (start > end -> always ''), causing
+    # jalr to silently write the link address to no register at all.
+    # rd lives in bits 20:25, same as every other I/R-type instruction.
+    reg_dest=m_line[20:25]
     drv[reg_dest]=sign_ext(signed_conv_down(str((reg_pc+4))))
     reg_pc=(signed_conv_up(drv[reg_source])+signed_conv_up(sign_ext(imm_val)))
 
@@ -180,8 +183,13 @@ def sll(m_line):
     reg_source2=m_line[7:12]
     reg_source1=m_line[12:17]
     reg_dest=m_line[20:25]
-    value=sign_ext(signed_conv_down(int(drv[reg_source1],2)(2*int(drv[reg_source2][32-4-1:],2))))
-    drv[reg_dest]=value
+    # BUG FIX: original was int(drv[reg_source1],2)(2*int(...)) which
+    # calls an int as a function -> TypeError, crashes at runtime.
+    # RISC-V sll is a logical left shift by the low 5 bits of rs2,
+    # truncated (not sign-extended) to 32 bits.
+    shamt = int(drv[reg_source2][27:], 2)
+    value = (int(drv[reg_source1], 2) << shamt) & 0xFFFFFFFF
+    drv[reg_dest] = format(value, '032b')
 
 
 def sltu(m_line):
@@ -195,8 +203,14 @@ def srl(m_line):
     reg_source2=m_line[7:12]
     reg_source1=m_line[12:17]
     reg_dest=m_line[20:25]
-    value=sign_ext(signed_conv_down(int(drv[reg_source1],2)//(2**int(drv[reg_source2][32-4-1:],2))))
-    drv[reg_dest]=value
+    # BUG FIX: original routed the shift result through
+    # signed_conv_down/sign_ext, which treats the value as a signed
+    # decimal and can zero-pad incorrectly / obscure the true bit
+    # pattern for a *logical* shift. srl must never propagate a sign
+    # bit -- do the shift directly on the raw bit pattern instead.
+    shamt = int(drv[reg_source2][27:], 2)
+    value = int(drv[reg_source1], 2) >> shamt
+    drv[reg_dest] = format(value, '032b')
 
 
 def jal(m_line):
